@@ -38,7 +38,7 @@ import os
 
 # Page configuration
 st.set_page_config(
-    page_title="Target TCIN Checker v2",
+    page_title="Target TCIN Checker",
     page_icon="🎯",
     layout="wide"
 )
@@ -77,7 +77,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
 def init_driver():
     """Initialize Selenium WebDriver with Chromium for Streamlit Cloud"""
     chrome_options = Options()
@@ -88,6 +87,8 @@ def init_driver():
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     chrome_options.add_argument('--disable-extensions')
     chrome_options.add_argument('--disable-software-rasterizer')
+    chrome_options.add_argument('--single-process')
+    chrome_options.add_argument('--disable-dev-tools')
     chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     
     try:
@@ -110,59 +111,76 @@ def init_driver():
         error_msg = f"Browser initialization error: {str(e)}"
         return None, error_msg
 
-def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text):
-    """Search Target for a keyword and extract TCINs"""
+def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text, max_retries=2):
+    """Search Target for a keyword and extract TCINs with retry logic"""
     all_tcins = []
     
     for page in range(1, max_pages + 1):
-        try:
-            offset = (page - 1) * 24
-            url = f"https://www.target.com/s?searchTerm={keyword}&Nao={offset}"
-            
-            status_text.text(f"🔍 Searching '{keyword}' - Page {page}/{max_pages}...")
-            driver.get(url)
-            
-            # Wait for products to load
-            wait = WebDriverWait(driver, 15)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="product-card"], a[href*="/p/"]')))
-            time.sleep(2)
-            
-            # Extract TCINs
-            page_html = driver.page_source
-            tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
-            found_tcins = re.findall(tcin_pattern, page_html)
-            
-            # Remove duplicates while preserving order
-            unique_tcins = list(dict.fromkeys(found_tcins))
-            
-            # Add with position info
-            for idx, tcin in enumerate(unique_tcins):
-                position = offset + idx + 1
-                all_tcins.append({
-                    'tcin': tcin,
-                    'position': position,
-                    'page': page
-                })
-            
-            # Update progress
-            progress = page / max_pages
-            progress_bar.progress(progress)
-            
-            # Stop if fewer products than expected
-            if len(unique_tcins) < 24:
-                break
+        retry_count = 0
+        success = False
+        
+        while retry_count <= max_retries and not success:
+            try:
+                offset = (page - 1) * 24
+                url = f"https://www.target.com/s?searchTerm={keyword}&Nao={offset}"
                 
-            time.sleep(1.5)
-            
-        except Exception as e:
-            st.warning(f"⚠️ Error on page {page} for '{keyword}': {str(e)}")
+                if retry_count > 0:
+                    status_text.text(f"🔄 Retrying '{keyword}' - Page {page}/{max_pages} (Attempt {retry_count + 1})...")
+                else:
+                    status_text.text(f"🔍 Searching '{keyword}' - Page {page}/{max_pages}...")
+                
+                driver.get(url)
+                
+                # Wait for products to load
+                wait = WebDriverWait(driver, 15)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="product-card"], a[href*="/p/"]')))
+                time.sleep(2)
+                
+                # Extract TCINs
+                page_html = driver.page_source
+                tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
+                found_tcins = re.findall(tcin_pattern, page_html)
+                
+                # Remove duplicates while preserving order
+                unique_tcins = list(dict.fromkeys(found_tcins))
+                
+                # Add with position info
+                for idx, tcin in enumerate(unique_tcins):
+                    position = offset + idx + 1
+                    all_tcins.append({
+                        'tcin': tcin,
+                        'position': position,
+                        'page': page
+                    })
+                
+                # Update progress
+                progress = page / max_pages
+                progress_bar.progress(progress)
+                
+                success = True
+                
+                # Stop if fewer products than expected
+                if len(unique_tcins) < 24:
+                    break
+                    
+                time.sleep(1.5)
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count > max_retries:
+                    st.warning(f"⚠️ Failed after {max_retries + 1} attempts on page {page} for '{keyword}': {str(e)}")
+                    return all_tcins  # Return what we have so far
+                else:
+                    time.sleep(3)  # Wait before retry
+        
+        if not success:
             break
     
     return all_tcins
 
 def main():
     # Header
-    st.title("🎯 Target TCIN Indexing Checker v2")
+    st.title("🎯 Target TCIN Indexing Checker")
     st.markdown("**Check if your TCINs appear in Target.com search results across multiple keywords and pages**")
     
     # Setup instructions in expander
@@ -312,9 +330,33 @@ def main():
                     st.write(f"\n**Searching: {keyword}**")
                 
                 page_progress = st.progress(0)
-                search_results = search_target_keyword(
-                    driver, keyword, max_pages, page_progress, status_text
-                )
+                
+                # Try to search, recreate driver if it fails
+                try:
+                    search_results = search_target_keyword(
+                        driver, keyword, max_pages, page_progress, status_text
+                    )
+                except Exception as e:
+                    with log_container:
+                        st.warning(f"⚠️ Browser crashed, reinitializing... ({str(e)})")
+                    
+                    # Close old driver
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    
+                    # Create new driver
+                    driver, error = init_driver()
+                    if error or not driver:
+                        st.error(f"❌ Failed to reinitialize browser: {error}")
+                        break
+                    
+                    # Retry this keyword
+                    search_results = search_target_keyword(
+                        driver, keyword, max_pages, page_progress, status_text
+                    )
+                
                 results_data[keyword] = search_results
                 
                 with log_container:

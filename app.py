@@ -2,16 +2,25 @@
 Target TCIN Indexing Checker - Streamlit App
 A web-based tool for checking if TCINs appear in Target.com search results
 
-Installation:
-pip install streamlit selenium webdriver-manager pandas beautifulsoup4
+Installation Files Needed:
+1. app.py (this file)
+2. requirements.txt
+3. packages.txt
 
-Run:
+For Streamlit Cloud deployment, create these additional files in your repo:
+
+=== packages.txt ===
+chromium
+chromium-driver
+
+=== requirements.txt ===
+streamlit
+selenium==4.15.2
+pandas
+beautifulsoup4
+
+Run locally:
 streamlit run app.py
-
-Deploy to Streamlit Cloud:
-1. Push this file to GitHub
-2. Go to share.streamlit.io
-3. Connect your repo and deploy
 """
 
 import streamlit as st
@@ -24,8 +33,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import io
+import subprocess
+import os
 
 # Page configuration
 st.set_page_config(
@@ -68,24 +77,38 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+@st.cache_resource
 def init_driver():
-    """Initialize Selenium WebDriver"""
+    """Initialize Selenium WebDriver with Chromium for Streamlit Cloud"""
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    chrome_options.add_argument('--disable-extensions')
+    chrome_options.add_argument('--disable-software-rasterizer')
+    chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     
     try:
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=chrome_options
-        )
-        return driver
+        # For Streamlit Cloud - use system chromium
+        chrome_options.binary_location = "/usr/bin/chromium"
+        
+        # Find chromedriver
+        chromedriver_path = "/usr/bin/chromedriver"
+        
+        # If not found, try chromium-driver
+        if not os.path.exists(chromedriver_path):
+            chromedriver_path = "/usr/bin/chromium-driver"
+        
+        # Create service
+        service = Service(executable_path=chromedriver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        return driver, None
+        
     except Exception as e:
-        st.error(f"Error initializing browser: {str(e)}")
-        return None
+        error_msg = f"Browser initialization error: {str(e)}"
+        return None, error_msg
 
 def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text):
     """Search Target for a keyword and extract TCINs"""
@@ -141,6 +164,36 @@ def main():
     # Header
     st.title("🎯 Target TCIN Indexing Checker")
     st.markdown("**Check if your TCINs appear in Target.com search results across multiple keywords and pages**")
+    
+    # Setup instructions in expander
+    with st.expander("📦 Setup Instructions (For Streamlit Cloud)", expanded=False):
+        st.markdown("""
+        ### Required Files for Deployment:
+        
+        **1. Create `packages.txt`:**
+        ```
+        chromium
+        chromium-driver
+        ```
+        
+        **2. Create `requirements.txt`:**
+        ```
+        streamlit
+        selenium==4.15.2
+        pandas
+        beautifulsoup4
+        ```
+        
+        **3. Push all files to GitHub:**
+        - app.py
+        - packages.txt
+        - requirements.txt
+        
+        **4. Deploy on Streamlit Cloud:**
+        - Go to share.streamlit.io
+        - Connect your GitHub repo
+        - Deploy!
+        """)
     
     # Sidebar for inputs
     with st.sidebar:
@@ -221,11 +274,37 @@ def main():
             # Initialize driver
             with log_container:
                 st.write("🌐 Initializing browser...")
-            driver = init_driver()
             
-            if not driver:
-                st.error("Failed to initialize browser. Please try again.")
+            driver, error = init_driver()
+            
+            if error or not driver:
+                st.error(f"""
+                ❌ **Failed to initialize browser.**
+                
+                **Error:** {error if error else 'Unknown error'}
+                
+                **For Streamlit Cloud, make sure you have:**
+                1. A file called `packages.txt` with:
+                   ```
+                   chromium
+                   chromium-driver
+                   ```
+                2. A file called `requirements.txt` with:
+                   ```
+                   streamlit
+                   selenium==4.15.2
+                   pandas
+                   beautifulsoup4
+                   ```
+                
+                **For local deployment:**
+                - Install Chrome browser
+                - Run: `pip install selenium webdriver-manager pandas beautifulsoup4 streamlit`
+                """)
                 return
+            
+            with log_container:
+                st.success("✅ Browser initialized successfully!")
             
             # Search each keyword
             for idx, keyword in enumerate(keyword_list):
@@ -313,12 +392,18 @@ def main():
             
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
+            import traceback
+            with log_container:
+                st.code(traceback.format_exc())
             
         finally:
             if driver:
-                driver.quit()
-                with log_container:
-                    st.write("🔒 Browser closed")
+                try:
+                    driver.quit()
+                    with log_container:
+                        st.write("🔒 Browser closed")
+                except:
+                    pass
 
 if __name__ == "__main__":
     main()

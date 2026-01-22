@@ -134,49 +134,42 @@ def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text,
                 # Wait for products to load
                 wait = WebDriverWait(driver, 15)
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="product-card"], a[href*="/p/"]')))
-                time.sleep(2)
+                time.sleep(3)  # Extra time for all products to render
                 
-                # Extract TCINs from ONLY the main search results grid
-                # Find the main product grid container
+                # Extract TCINs from product cards in order they appear
                 try:
-                    # Target uses different selectors for the main search grid
+                    # Find all product cards on the page
                     product_cards = driver.find_elements(By.CSS_SELECTOR, '[data-test="product-card"]')
                     
                     unique_tcins = []
+                    seen_tcins = set()
+                    
                     for card in product_cards:
                         try:
-                            # Get the product link from each card
-                            link = card.find_element(By.CSS_SELECTOR, 'a[href*="/p/"]')
-                            href = link.get_attribute('href')
+                            # Get all links in this card
+                            links = card.find_elements(By.CSS_SELECTOR, 'a[href*="/A-"]')
                             
-                            # Extract TCIN from the URL
-                            match = re.search(r'/A-(\d+)', href)
-                            if match:
-                                tcin = match.group(1)
-                                if tcin not in unique_tcins:
-                                    unique_tcins.append(tcin)
+                            for link in links:
+                                href = link.get_attribute('href')
+                                if href:
+                                    # Extract TCIN from the URL
+                                    match = re.search(r'/A-(\d+)', href)
+                                    if match:
+                                        tcin = match.group(1)
+                                        if tcin not in seen_tcins:
+                                            unique_tcins.append(tcin)
+                                            seen_tcins.add(tcin)
+                                            break  # Only get first TCIN from this card
                         except:
                             continue
                     
-                    # If no product cards found, fall back to scanning limited section
-                    if len(unique_tcins) == 0:
-                        # Try to find the main results section only
-                        page_html = driver.page_source
-                        
-                        # Split by common recommendation section markers
-                        main_section = page_html.split('Recommended for you')[0] if 'Recommended for you' in page_html else page_html
-                        main_section = main_section.split('Sponsored')[0] if 'Sponsored' in main_section else main_section
-                        
-                        tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
-                        found_tcins = re.findall(tcin_pattern, main_section)
-                        unique_tcins = list(dict.fromkeys(found_tcins))[:24]  # Limit to 24 (one page)
+                    # Limit to first 30 products (main grid + sponsored)
+                    # This excludes the "Recommended for you" carousel which comes later
+                    unique_tcins = unique_tcins[:30]
                         
                 except Exception as e:
-                    # Fallback to original method with limit
-                    page_html = driver.page_source
-                    tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
-                    found_tcins = re.findall(tcin_pattern, page_html)
-                    unique_tcins = list(dict.fromkeys(found_tcins))[:24]
+                    st.warning(f"⚠️ Error extracting product cards: {str(e)}")
+                    unique_tcins = []
                 
                 # Add with position info
                 for idx, tcin in enumerate(unique_tcins):
@@ -214,7 +207,7 @@ def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text,
 
 def main():
     # Header
-    st.title("🎯 Target TCIN Indexing Checker")
+    st.title("🎯 Target TCIN Indexing Checker v3")
     st.markdown("**Check if your TCINs appear in Target.com search results across multiple keywords and pages**")
     
     # Setup instructions in expander

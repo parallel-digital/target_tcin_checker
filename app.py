@@ -38,7 +38,7 @@ import os
 
 # Page configuration
 st.set_page_config(
-    page_title="Target TCIN Checker",
+    page_title="Target TCIN Checker v2",
     page_icon="🎯",
     layout="wide"
 )

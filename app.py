@@ -136,13 +136,47 @@ def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text,
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test="product-card"], a[href*="/p/"]')))
                 time.sleep(2)
                 
-                # Extract TCINs
-                page_html = driver.page_source
-                tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
-                found_tcins = re.findall(tcin_pattern, page_html)
-                
-                # Remove duplicates while preserving order
-                unique_tcins = list(dict.fromkeys(found_tcins))
+                # Extract TCINs from ONLY the main search results grid
+                # Find the main product grid container
+                try:
+                    # Target uses different selectors for the main search grid
+                    product_cards = driver.find_elements(By.CSS_SELECTOR, '[data-test="product-card"]')
+                    
+                    unique_tcins = []
+                    for card in product_cards:
+                        try:
+                            # Get the product link from each card
+                            link = card.find_element(By.CSS_SELECTOR, 'a[href*="/p/"]')
+                            href = link.get_attribute('href')
+                            
+                            # Extract TCIN from the URL
+                            match = re.search(r'/A-(\d+)', href)
+                            if match:
+                                tcin = match.group(1)
+                                if tcin not in unique_tcins:
+                                    unique_tcins.append(tcin)
+                        except:
+                            continue
+                    
+                    # If no product cards found, fall back to scanning limited section
+                    if len(unique_tcins) == 0:
+                        # Try to find the main results section only
+                        page_html = driver.page_source
+                        
+                        # Split by common recommendation section markers
+                        main_section = page_html.split('Recommended for you')[0] if 'Recommended for you' in page_html else page_html
+                        main_section = main_section.split('Sponsored')[0] if 'Sponsored' in main_section else main_section
+                        
+                        tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
+                        found_tcins = re.findall(tcin_pattern, main_section)
+                        unique_tcins = list(dict.fromkeys(found_tcins))[:24]  # Limit to 24 (one page)
+                        
+                except Exception as e:
+                    # Fallback to original method with limit
+                    page_html = driver.page_source
+                    tcin_pattern = r'/p/[^/]+/-/A-(\d+)'
+                    found_tcins = re.findall(tcin_pattern, page_html)
+                    unique_tcins = list(dict.fromkeys(found_tcins))[:24]
                 
                 # Add with position info
                 for idx, tcin in enumerate(unique_tcins):

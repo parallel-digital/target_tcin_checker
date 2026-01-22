@@ -162,7 +162,7 @@ def search_target_keyword(driver, keyword, max_pages, progress_bar, status_text)
 
 def main():
     # Header
-    st.title("🎯 Target TCIN Indexing Checker")
+    st.title("🎯 Target TCIN Indexing Checker v2")
     st.markdown("**Check if your TCINs appear in Target.com search results across multiple keywords and pages**")
     
     # Setup instructions in expander
